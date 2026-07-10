@@ -44,6 +44,7 @@ import {
   WINDOW_STATE_WORKSPACE_VISIBLE,
   WINDOW_STATE_WORKSPACE_OFFSET_Y,
   WINDOW_STATE_WORKSPACE_OPACITY,
+  type TileLayout,
 } from "./window-manager";
 
 COMPOSITOR.env.set("QT_QPA_PLATFORM", "wayland;xcb");
@@ -130,6 +131,7 @@ COMPOSITOR.onEnable((event) => {
 //   workspaces.changed       -> WorkspacesView                     (broadcast)
 //   windows.activate         { windowId: string }                  (command)
 //   dock.proximity           { monitor: string, inside: bool }    (broadcast)
+//   bar.visibility           { visible: bool }                     (broadcast)
 // ---------------------------------------------------------------------------
 const WORKSPACE_IPC = createIpcServer();
 let lastWorkspacesJson = "";
@@ -180,6 +182,13 @@ WORKSPACE_IPC.handle("workspaces.toggleTiling", (params) => {
     HYBRID_WINDOW_MANAGER.toggleCurrentWorkspaceTiling();
   }
   scheduleWorkspaceBroadcast();
+});
+WORKSPACE_IPC.handle("workspaces.setTileLayout", (params) => {
+  const layout = (params as { layout?: TileLayout } | undefined)?.layout;
+  if (layout === "scrolling" || layout === "dwindle" || layout === "master") {
+    HYBRID_WINDOW_MANAGER.setTileLayout(layout);
+    scheduleWorkspaceBroadcast();
+  }
 });
 WORKSPACE_IPC.handle("windows.activate", (params) => {
   const windowId = (params as { windowId?: string } | undefined)?.windowId;
@@ -310,7 +319,7 @@ COMPOSITOR.process.service("cliphist-image", {
 });
 
 COMPOSITOR.key.bind("terminal", "Super+T", () => {
-  COMPOSITOR.process.spawn({ command: ["kitty"] });
+  COMPOSITOR.process.spawn({ command: ["ghostty"] });
 });
 
 COMPOSITOR.key.bind("chrome", "Super+B", () => {
@@ -381,6 +390,10 @@ COMPOSITOR.key.bind("close-focused-window", "Super+Q", () => {
 COMPOSITOR.key.bind("toggle-focused-window-maximize", "Super+M", () => {
   HYBRID_WINDOW_MANAGER.toggleFocusedWindowMaximize();
 });
+// Gamemode: toggle the focused window fullscreen for distraction-free gaming.
+COMPOSITOR.key.bind("gamemode", "Super+G", () => {
+  HYBRID_WINDOW_MANAGER.toggleFocusedWindowFullscreen();
+});
 COMPOSITOR.key.bind("tile-focus-left-quick", "Super+Left", () => {
   HYBRID_WINDOW_MANAGER.focusTile(-1);
 });
@@ -415,6 +428,27 @@ COMPOSITOR.key.bind("workspace-prev", "Super+Ctrl+Up", () => {
 });
 COMPOSITOR.key.bind("workspace-next", "Super+Ctrl+Down", () => {
   HYBRID_WINDOW_MANAGER.switchWorkspace(1);
+  scheduleWorkspaceBroadcast();
+});
+
+// Tiling layout switching (Hyprland-style dwindle/master join the default
+// scrolling row). Super+Alt keeps these off every existing Super / Ctrl / Shift
+// combo — Super alone is start-menu and Super+A is already bound to it, so the
+// extra Alt modifier is what disambiguates. Cycle: scrolling -> dwindle -> master.
+COMPOSITOR.key.bind("cycle-tile-layout", "Super+Alt+T", () => {
+  HYBRID_WINDOW_MANAGER.cycleTileLayout();
+  scheduleWorkspaceBroadcast();
+});
+COMPOSITOR.key.bind("layout-scrolling", "Super+Alt+1", () => {
+  HYBRID_WINDOW_MANAGER.setTileLayout("scrolling");
+  scheduleWorkspaceBroadcast();
+});
+COMPOSITOR.key.bind("layout-dwindle", "Super+Alt+2", () => {
+  HYBRID_WINDOW_MANAGER.setTileLayout("dwindle");
+  scheduleWorkspaceBroadcast();
+});
+COMPOSITOR.key.bind("layout-master", "Super+Alt+3", () => {
+  HYBRID_WINDOW_MANAGER.setTileLayout("master");
   scheduleWorkspaceBroadcast();
 });
 
@@ -666,6 +700,7 @@ COMPOSITOR.event.onWindowMinimizeRequest((event) => {
 
 COMPOSITOR.event.onWindowFullscreenRequest((event) => {
   HYBRID_WINDOW_MANAGER.onWindowFullscreenRequest(event);
+  WORKSPACE_IPC.broadcast("bar.visibility", { visible: !event.fullscreen });
 });
 
 COMPOSITOR.event.onWindowActivateRequest((event) => {
